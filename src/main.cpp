@@ -14,15 +14,30 @@ void work2(int t, int id, int a){
     std::cout <<"        " <<  std::this_thread::get_id() << " " << id << " end after " << t << " seconds.\n";
 };
 
+void workIteration(){
+    unsigned long a = 0;
+    for(int i = 0; i < 12331232123;++i){
+        a += 1;
+    }
+}; 
+
+void setThisProcessCPUAffinitiy(int num_cpu){
+    cpu_set_t  mask;
+    CPU_ZERO(&mask);
+    CPU_SET(num_cpu, &mask);
+    int result = sched_setaffinity(0, sizeof(mask), &mask);
+};
+
 int main(){
     printf("!!!!! Program starts.\n");
-    unsigned num_max_threads = std::thread::hardware_concurrency();
+    unsigned int num_max_threads = 
+        std::thread::hardware_concurrency();
     std::cout << "Launching " << num_max_threads << " threads\n";
 
-    ThreadPool pool(4);
+    ThreadPool pool(6);
 
-    for(int i = 0; i < 20; ++i) {
-        pool.enqueueJob([i] () { work(i % 3 + 1, i); });
+    for(int i = 0; i < 6; ++i) {
+        pool.enqueueJob( [i]() { workIteration(); });
     }
 
 
