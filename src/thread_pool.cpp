@@ -16,10 +16,28 @@ ThreadPool::ThreadPool(size_t num_thread)
 {
     worker_threads_.reserve(num_threads_);
     for(size_t i = 0; i < num_threads_; ++i) {
+        std::cout << "========== [" << i <<"]-th thread is generating... ==========\n";
         worker_threads_.emplace_back([this]() { this->workerThread(); });
-        this->setThreadCPUAffinity(worker_threads_[i], 2*i+1);
     }
+    std::cout << "[" << num_threads_ <<"] threads are generated!\n";
 };
+
+ThreadPool::ThreadPool(size_t num_thread, std::vector<int> cpu_affinity_numbers)
+: num_threads_(num_thread), flag_stop_all_(false)
+{
+    if(num_threads_ != cpu_affinity_numbers.size()) {
+        throw std::runtime_error("ThreadPool::ThreadPool : cpu_affinity_numbers.size() != num_thread");
+    }
+
+    worker_threads_.reserve(num_threads_);
+    for(size_t i = 0; i < num_threads_; ++i) {
+        std::cout << "========== [" << i <<"]-th thread is generating... ==========\n";
+        worker_threads_.emplace_back([this]() { this->workerThread(); });
+        this->setThreadCPUAffinity(worker_threads_[i], cpu_affinity_numbers[i]);
+    }
+    std::cout << "\n"; 
+};
+
 
 ThreadPool::~ThreadPool() {
     flag_stop_all_ = true;
@@ -37,7 +55,7 @@ void ThreadPool::workerThread() {
 
     {
         std::unique_lock<std::mutex> lock(mut_);
-        std::cout << "The thread id [" << std::this_thread::get_id() << "] is made.\n";
+        std::cout << "The thread id [" << std::this_thread::get_id() << "] is initiated.\n";
     }
 
     while( true ) {
@@ -45,10 +63,11 @@ void ThreadPool::workerThread() {
         cond_var_.wait(lock, [this]() { return !this->jobs_.empty() || flag_stop_all_;}); 
         // 조건문을 검사해보고 false이면 notify가 올 때 까지 무한슬립한다.
         // notify가 오면 조건을 다시 검사한다. 그래도 false이면 다시 잔다.
-        // Spurious wake 를 생각하자. mutex를 공유하는 다른 thread가 wakeup 하면 notify된다? 
-        std::cout << "The thread id [" << std::this_thread::get_id() << "] woke up!\n";
-        std::cout << "flag : "<< flag_stop_all_ << std::endl;
+        // Spurious wake 를 생각하자. mutex를 공유하는 다른 thread가 wakeup 하면 notify된다 ?????
+        // std::cout << "The thread id [" << std::this_thread::get_id() << "] woke up!\n";
+        // std::cout << "flag : "<< flag_stop_all_ << std::endl;
         if( flag_stop_all_ && this->jobs_.empty()){
+            std::cout << "The thread id [" << std::this_thread::get_id() << "] captured stop sign... going to join...\n";
             break;
         }
 
@@ -95,5 +114,11 @@ bool ThreadPool::setThreadCPUAffinity(std::thread& th, const int& cpu_num){
         return false;
     }
 
+    std::cout << "thread is running on ["<<cpu_num <<"]-th CPU.\n";
+
     return true;
 };
+
+
+void ThreadPool::notifyOne(){ cond_var_.notify_one(); };
+void ThreadPool::notifyAll(){ cond_var_.notify_all(); };

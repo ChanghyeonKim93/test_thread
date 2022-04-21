@@ -9,7 +9,8 @@
 #include <mutex>
 #include <condition_variable>
 
-#include <functional>
+#include <utility> // std::move, std::forward
+#include <functional> // std::function
 
 #include <sched.h>
 #include <pthread.h> // Linux Only. https://man7.org/linux/man-pages/man3/pthread_setaffinity_np.3.html
@@ -29,12 +30,15 @@ public:
 private:
     bool setThreadCPUAffinity(std::thread& th, const int& cpu_num);
     void workerThread();
-    void notifyOne();
 
 public:
     ThreadPool(size_t num_thread);
+    ThreadPool(size_t num_thread, std::vector<int> cpu_affinity_numbers);
     ~ThreadPool();
     void enqueueJob(std::function<void()> job);
+
+    void notifyOne();
+    void notifyAll();
 };
 
 #endif

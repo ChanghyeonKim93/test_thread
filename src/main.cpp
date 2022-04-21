@@ -16,7 +16,7 @@ void work2(int t, int id, int a){
 
 void workIteration(){
     unsigned long a = 0;
-    for(int i = 0; i < 12331232123;++i){
+    for(int i = 0; i < 100000000;++i){
         a += 1;
     }
 }; 
@@ -30,22 +30,23 @@ void setThisProcessCPUAffinitiy(int num_cpu){
 
 int main(){
     printf("!!!!! Program starts.\n");
-    unsigned int num_max_threads = 
-        std::thread::hardware_concurrency();
-    std::cout << "Launching " << num_max_threads << " threads\n";
 
-    ThreadPool pool(6);
+    int num_threads = 2; 
+    std::vector<int> select_cpu_nums(num_threads);
+    select_cpu_nums[0] = 5;
+    select_cpu_nums[1] = 7;
 
-    for(int i = 0; i < 6; ++i) {
+    ThreadPool pool(num_threads, select_cpu_nums);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+
+    for(int i = 0; i < 9; ++i) {
         pool.enqueueJob( [i]() { workIteration(); });
     }
 
-
-    while(1){
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    
     std::cout << "!!!!! program ends...\n";
+
     
     return 0;
 }
