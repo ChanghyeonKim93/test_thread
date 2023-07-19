@@ -5,53 +5,33 @@
 #include <future>
 
 #include "data_manager.h"
-#include "thread_manager.h"
+
+#include "bundle_adjuster.h"
 
 class VisualOdometry
 {
 public:
   VisualOdometry(const std::shared_ptr<DataManager> &data_manager)
-      : data_manager_(data_manager) {}
-  ~VisualOdometry()
+      : data_manager_(data_manager), bundle_adjuster_(std::make_unique<BundleAdjuster>(data_manager_))
   {
-    if (thread_->joinable())
-    {
-      thread_->join();
-      std::cerr << "VisualOdometry thread joins successfully.\n";
-    }
+    // Run threads
+    bundle_adjuster_->Run();
   }
 
-  void Run(const std::shared_future<void> &terminate_signal)
+  ~VisualOdometry() {}
+
+  bool TrackStereoImages()
   {
-    thread_ = std::make_unique<std::thread>([&]()
-                                            { ThreadProcess(terminate_signal); });
-  }
+    bool is_success = true;
+    // TODO(@): implement track function
 
-private:
-  void ThreadProcess(const std::shared_future<void> &terminate_signal)
-  {
-    std::stringstream ss;
-    ss << "Start thread: " << std::this_thread::get_id() << "\n";
-    std::cerr << ss.str();
-
-    while (true)
-    {
-      std::cout << "Run VO thread\n";
-
-      // Check thread termination
-      std::future_status terminate_status = terminate_signal.wait_for(std::chrono::microseconds(1));
-      if (terminate_status == std::future_status::ready)
-      {
-        break;
-      }
-    }
-    std::cerr << "'VisualOdometry' thread receives termination signal.\n";
+    return is_success;
   }
 
 private:
   std::shared_ptr<DataManager> data_manager_;
 
-  std::unique_ptr<std::thread> thread_;
+  std::unique_ptr<BundleAdjuster> bundle_adjuster_;
 };
 
 #endif

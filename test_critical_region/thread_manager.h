@@ -13,7 +13,6 @@ public:
   ~ThreadManager()
   {
     terminate_promise_.set_value();
-    std::cout << "Thread manager is deleted.\n";
   }
 
   std::shared_future<void> GetTerminateSignal()
