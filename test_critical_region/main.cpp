@@ -12,7 +12,7 @@ int main()
   std::shared_ptr<DataManager> data_manager = std::make_shared<DataManager>();
   std::unique_ptr<VisualOdometry> vo = std::make_unique<VisualOdometry>(data_manager);
 
-  MapPoint mp = data_manager->GenerateMapPointWithoutRegister();
+  Landmark mp = data_manager->GenerateMapPointWithoutRegister();
   data_manager->RegisterMapPoint(mp);
   auto mp_in_pool = data_manager->GetMapPoint(0);
 

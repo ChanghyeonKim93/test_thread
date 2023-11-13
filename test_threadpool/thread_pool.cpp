@@ -1,124 +1,120 @@
 #include "thread_pool.h"
 
-// Intel Celeron J4125: L2 cache (4 MB) (1 MB per core?) only.
-// Intel Core i7-10700K: L1 cache 64 KB (per core), L2 256 KB (per core) L3 16 MB (shared)
-// L1 cache cycle : 4
-// L2 cache cycle : 12
-// L3 cache cycle : 36 (for i7-4770)
-// LRU - Least Recently Used) cache bye-bye
-// add, sub cycle : 1
-// mul cycle : 4
-// div cycle : 20~26
+#include <iostream>
+#include <sstream>
+#include <string>
 
+void PrintInfoThreadSafeWithPidImpl(const std::string& str,
+                                    const std::string& func_str) {
+  std::stringstream ss;
+  ss << "Pid[" << std::this_thread::get_id() << "][INFO](";
+  ss << func_str << "): " << str << "\n";
+  std::cerr << ss.str();
+}
+#define PrintInfoThreadSafeWithPid(str) \
+  PrintInfoThreadSafeWithPidImpl(str, std::string(__func__));
 
-ThreadPool::ThreadPool(size_t num_thread)
-: num_threads_(num_thread), flag_stop_all_(false)
-{
-    worker_threads_.reserve(num_threads_);
-    for(size_t i = 0; i < num_threads_; ++i) {
-        std::cout << "========== [" << i <<"]-th thread is generating... ==========\n";
-        worker_threads_.emplace_back([this]() { this->workerThread(); });
-    }
-    std::cout << "[" << num_threads_ <<"] threads are generated!\n";
+ThreadPool::ThreadPool(int num_thread)
+    : num_threads_(num_thread), flag_stop_all_(false) {
+  worker_thread_list_.reserve(num_threads_);
+  for (int i = 0; i < num_threads_; ++i) {
+    std::cout << "========== [" << i
+              << "]-th thread is generating... ==========\n";
+    worker_thread_list_.emplace_back([this]() { this->RunWorkerThread(); });
+  }
+  std::cout << "[" << num_threads_ << "] threads are generated!\n";
 };
 
-ThreadPool::ThreadPool(size_t num_thread, std::vector<int> cpu_affinity_numbers)
-: num_threads_(num_thread), flag_stop_all_(false)
-{
-    if(num_threads_ != cpu_affinity_numbers.size()) {
-        throw std::runtime_error("ThreadPool::ThreadPool : cpu_affinity_numbers.size() != num_thread");
-    }
+ThreadPool::ThreadPool(int num_thread, std::vector<int> cpu_affinity_numbers)
+    : num_threads_(num_thread), flag_stop_all_(false) {
+  if (num_threads_ != cpu_affinity_numbers.size()) {
+    throw std::runtime_error(
+        "ThreadPool::ThreadPool : cpu_affinity_numbers.size() != num_thread");
+  }
 
-    worker_threads_.reserve(num_threads_);
-    for(size_t i = 0; i < num_threads_; ++i) {
-        std::cout << "========== [" << i <<"]-th thread is generating... ==========\n";
-        worker_threads_.emplace_back([this]() { this->workerThread(); });
-        this->setThreadCPUAffinity(worker_threads_[i], cpu_affinity_numbers[i]);
-    }
-    std::cout << "\n"; 
+  worker_thread_list_.reserve(num_threads_);
+  for (int i = 0; i < num_threads_; ++i) {
+    PrintInfoThreadSafeWithPid("========== thread is generating... ==========");
+
+    worker_thread_list_.emplace_back([this]() { this->RunWorkerThread(); });
+    this->AllocateCpuForThread(worker_thread_list_[i], cpu_affinity_numbers[i]);
+  }
 };
-
 
 ThreadPool::~ThreadPool() {
-    flag_stop_all_ = true;
-    cond_var_.notify_all();
+  flag_stop_all_ = true;
+  condition_variable_.notify_all();
 
-    for(auto& t : worker_threads_) {
-        std::cout << "--- JOINING THE THREAD [" << t.get_id() << "]...";
-        t.join();
-        std::cout << " DONE!\n";
-    }
+  for (auto& t : worker_thread_list_) {
+    PrintInfoThreadSafeWithPid("--- JOINING THE THREAD");
+    t.join();
+    PrintInfoThreadSafeWithPid("Done!");
+  }
 };
 
+void ThreadPool::RunWorkerThread() {
+  PrintInfoThreadSafeWithPid("The thread is initialized.");
 
-void ThreadPool::workerThread() {
-
-    {
-        std::unique_lock<std::mutex> lock(mut_);
-        std::cout << "The thread id [" << std::this_thread::get_id() << "] is initiated.\n";
+  while (true) {
+    std::unique_lock<std::mutex> local_lock(mutex_);
+    condition_variable_.wait(local_lock, [this]() {
+      return (!this->job_queue_.empty()) || flag_stop_all_;
+    });
+    if (flag_stop_all_ && this->job_queue_.empty()) {
+      PrintInfoThreadSafeWithPid(
+          "The thread captured stop sign. The thread is going to join...");
+      break;
     }
 
-    while( true ) {
-        std::unique_lock<std::mutex> lock(mut_);
-        cond_var_.wait(lock, [this]() { return !this->jobs_.empty() || flag_stop_all_;}); 
-        // 조건문을 검사해보고 false이면 notify가 올 때 까지 무한슬립한다.
-        // notify가 오면 조건을 다시 검사한다. 그래도 false이면 다시 잔다.
-        // Spurious wake 를 생각하자. mutex를 공유하는 다른 thread가 wakeup 하면 notify된다 ?????
-        // std::cout << "The thread id [" << std::this_thread::get_id() << "] woke up!\n";
-        // std::cout << "flag : "<< flag_stop_all_ << std::endl;
-        if( flag_stop_all_ && this->jobs_.empty()){
-            std::cout << "The thread id [" << std::this_thread::get_id() << "] captured stop sign... going to join...\n";
-            break;
-        }
+    // Get a job
+    std::function<void()> new_job = std::move(job_queue_.front());
+    job_queue_.pop();
+    local_lock.unlock();
 
-        // Get a job
-        std::function<void()> job = std::move(jobs_.front());
-        jobs_.pop();
-        lock.unlock();
-
-        // Do the job! 
-        std::cout << "The thread id [" << std::this_thread::get_id() << "] get the job.\n";
-        job();
-    }
-    std::cout << "The thread id [" << std::this_thread::get_id() << "] is end.\n";
+    // Do the job!
+    PrintInfoThreadSafeWithPid("Get the job.");
+    new_job();
+  }
+  PrintInfoThreadSafeWithPid("The thread is end.");
 };
 
-void ThreadPool::enqueueJob(std::function<void()> job){
-    if( flag_stop_all_ ){
-        throw std::runtime_error("Thread pool 사용 중지.");
-    }
+void ThreadPool::enqueueJob(std::function<void()> job) {
+  if (flag_stop_all_) {
+    throw std::runtime_error("Thread pool 사용 중지.");
+  }
 
-    {
-        std::lock_guard<std::mutex> lock(mut_);
-        jobs_.push(std::move(job));
-        std::cout <<"push job. job queue size : " << jobs_.size() <<std::endl;
-    }
-    cond_var_.notify_one();
-    std::cout << "   notified.\n";
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    job_queue_.push(std::move(job));
+    PrintInfoThreadSafeWithPid("Job queue size: " +
+                               std::to_string(job_queue_.size()));
+  }
+  condition_variable_.notify_one();
+
+  PrintInfoThreadSafeWithPid("Notified");
 };
 
-bool ThreadPool::setThreadCPUAffinity(std::thread& th, const int& cpu_num){
+bool ThreadPool::AllocateCpuForThread(std::thread& th, const int& cpu_num) {
+  unsigned int num_max_threads = std::thread::hardware_concurrency();
+  if (cpu_num >= num_max_threads) {
+    std::cerr << "Exceed the maximum logical CPU number!";
+    return false;
+  }
 
-    unsigned int num_max_threads = std::thread::hardware_concurrency();
-    if(cpu_num >= num_max_threads) {
-        std::cerr << "Exceed the maximum logical CPU number!\n";
-        return false;
-    }
-    
-    cpu_set_t cpuSet;
-    CPU_ZERO(&cpuSet );
-    CPU_SET(cpu_num, &cpuSet);
-    int rc = pthread_setaffinity_np(th.native_handle(), sizeof(cpu_set_t), &cpuSet);
-    if (rc != 0) {
-        std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
-        return false;
-    }
+  cpu_set_t cpuSet;
+  CPU_ZERO(&cpuSet);
+  CPU_SET(cpu_num, &cpuSet);
+  int rc =
+      pthread_setaffinity_np(th.native_handle(), sizeof(cpu_set_t), &cpuSet);
+  if (rc != 0) {
+    std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+    return false;
+  }
 
-    std::cout << "thread is running on ["<<cpu_num <<"]-th CPU.\n";
-
-    return true;
+  PrintInfoThreadSafeWithPid("The thread is running on CPU [" +
+                             std::to_string(cpu_num) + "]");
+  return true;
 };
 
-
-void ThreadPool::notifyOne(){ cond_var_.notify_one(); };
-void ThreadPool::notifyAll(){ cond_var_.notify_all(); };
+void ThreadPool::notifyOne() { condition_variable_.notify_one(); };
+void ThreadPool::notifyAll() { condition_variable_.notify_all(); };
