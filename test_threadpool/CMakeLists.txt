@@ -11,3 +11,4 @@ set(SRC ${SRC}
 include_directories(${INCLUDE_DIR})
 
 add_executable(${CMAKE_PROJECT_NAME}_thread_pool main.cpp ${SRC})
+add_executable(${CMAKE_PROJECT_NAME}_test_enqueue_and_future test_enqueue_and_future.cc ${SRC})
