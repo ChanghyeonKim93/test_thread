@@ -25,7 +25,7 @@ class ThreadPool {
   ~ThreadPool();
 
   template <typename Func, typename... Args>
-  std::future<typename std::result_of<Func(Args...)>::type>
+  std::future<typename std::invoke_result<Func, Args...>::type>
   EnqueueJobAndGetFuture(Func&& func, Args&&... args);
 
   void EnqueueJob(std::function<void()> job);
@@ -46,9 +46,9 @@ class ThreadPool {
 };
 
 template <typename Func, typename... Args>
-std::future<typename std::result_of<Func(Args...)>::type>
+std::future<typename std::invoke_result<Func, Args...>::type>  // from C++17
 ThreadPool::EnqueueJobAndGetFuture(Func&& func, Args&&... args) {
-  using ReturnType = typename std::result_of<Func(Args...)>::type;
+  using ReturnType = typename std::invoke_result<Func, Args...>::type;
 
   auto task_ptr = std::make_shared<std::packaged_task<ReturnType()>>(
       std::bind(std::forward<Func>(func), std::forward<Args>(args)...));
