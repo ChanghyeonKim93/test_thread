@@ -55,7 +55,7 @@ int main() {
   // }
 
   for (int index = 0; index < 48; ++index) {
-    thread_pool->EnqueueJob([]() { Work3(); });
+    thread_pool->EnqueueTask([]() { Work3(); });
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 

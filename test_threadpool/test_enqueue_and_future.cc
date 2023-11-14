@@ -46,11 +46,14 @@ int main() {
   vector_of_future_feature_list.reserve(3);
 
   vector_of_future_feature_list.emplace_back(
-      thread_pool->EnqueueJobAndGetFuture(FindFeatures, 100, 20, 8, 0.9f));
+      thread_pool->EnqueueTaskAndGetResultInFuture(FindFeatures, 100, 20, 8,
+                                                   0.9f));
   vector_of_future_feature_list.emplace_back(
-      thread_pool->EnqueueJobAndGetFuture(FindFeatures, 200, 20, 8, 0.9f));
+      thread_pool->EnqueueTaskAndGetResultInFuture(FindFeatures, 200, 20, 8,
+                                                   0.9f));
   vector_of_future_feature_list.emplace_back(
-      thread_pool->EnqueueJobAndGetFuture(FindFeatures, 300, 20, 8, 0.9f));
+      thread_pool->EnqueueTaskAndGetResultInFuture(FindFeatures, 300, 20, 8,
+                                                   0.9f));
 
   FeatureList all_feature_list;
   for (size_t index = 0; index < 3; ++index) {

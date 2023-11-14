@@ -1,18 +1,29 @@
 #include "thread_pool.h"
 
+#include <chrono>
 #include <functional>
 #include <future>
 #include <iostream>
 #include <sstream>
 #include <string>
 
+using namespace std ::chrono_literals;
+
 void PrintInfoImpl(const std::string& str, const std::string& func_str) {
   std::stringstream ss;
-  ss << "Pid[" << std::this_thread::get_id() << "][INFO]\"" << func_str
-     << "\": " << str << "\n";
+  ss << "[ThreadId:" << std::this_thread::get_id() << "][INFO] \"" << func_str
+     << "()\": " << str << "\n";
   std::cerr << ss.str();
 }
 #define PrintInfo(str) PrintInfoImpl(str, std::string(__func__));
+
+void ThrowErrorImpl(const std::string& str, const std::string& func_str) {
+  std::stringstream ss;
+  ss << "[ThreadId:" << std::this_thread::get_id() << "][Error] \"" << func_str
+     << "()\": " << str << "\n";
+  throw std::runtime_error(ss.str());
+}
+#define ThrowError(str) ThrowErrorImpl(str, std::string(__func__));
 
 ThreadPool::ThreadPool(int num_threads_in_pool)
     : thread_pool_status_(ThreadPoolStatus::kRun) {
@@ -21,43 +32,41 @@ ThreadPool::ThreadPool(int num_threads_in_pool)
     PrintInfo("========== thread is generating... ==========");
     worker_thread_list_.emplace_back([this]() { RunProcessForWorkerThread(); });
   }
-  std::cout << "[" << num_threads_in_pool << "] threads are generated!\n";
-};
+}
 
-ThreadPool::ThreadPool(int num_threads_in_pool,
-                       std::vector<int> cpu_affinity_numbers)
+ThreadPool::ThreadPool(const int num_threads_in_pool,
+                       const std::vector<int>& cpu_affinity_numbers)
     : thread_pool_status_(ThreadPoolStatus::kRun) {
-  if (num_threads_in_pool != cpu_affinity_numbers.size()) {
-    throw std::runtime_error(
-        "ThreadPool::ThreadPool : cpu_affinity_numbers.size() != num_thread");
-  }
+  if (num_threads_in_pool != static_cast<int>(cpu_affinity_numbers.size()))
+    ThrowError("cpu_affinity_numbers.size() != num_threads");
 
   worker_thread_list_.reserve(num_threads_in_pool);
   for (int index = 0; index < num_threads_in_pool; ++index) {
-    PrintInfo("========== thread is generating... ==========");
+    PrintInfo("========== Thread is generated... ==========");
     worker_thread_list_.emplace_back([this]() { RunProcessForWorkerThread(); });
-    AllocateProcessorForEachThread(worker_thread_list_[index],
-                                   cpu_affinity_numbers[index]);
+    AllocateCpuProcessorForEachThread(worker_thread_list_[index],
+                                      cpu_affinity_numbers[index]);
   }
-};
+}
 
 ThreadPool::~ThreadPool() {
   thread_pool_status_ = ThreadPoolStatus::kKill;
-  NotifyAll();
+  WakeUpAllThreads();
   for (auto& worker_thread : worker_thread_list_) {
     PrintInfo("--- JOINING THE THREAD");
+    while (!worker_thread.joinable()) WakeUpAllThreads();
     worker_thread.join();
-    PrintInfo("Done!");
+    PrintInfo("Joining is done!");
   }
-};
+}
 
 void ThreadPool::RunProcessForWorkerThread() {
   PrintInfo("The thread is initialized.");
   while (true) {
     std::unique_lock<std::mutex> local_lock(mutex_);
     condition_variable_.wait(local_lock, [this]() {
-      return (!job_queue_.empty() ||
-              thread_pool_status_ == ThreadPoolStatus::kKill);
+      return (!task_queue_.empty() ||
+              (thread_pool_status_ == ThreadPoolStatus::kKill));
     });
 
     if (thread_pool_status_ == ThreadPoolStatus::kKill) {
@@ -67,53 +76,78 @@ void ThreadPool::RunProcessForWorkerThread() {
     }
 
     // Get a job
-    std::function<void()> new_job = std::move(job_queue_.front());
-    job_queue_.pop();
+    std::function<void()> new_task = std::move(task_queue_.front());
+    task_queue_.pop();
+    ++num_of_ongoing_tasks_;
     local_lock.unlock();
 
     // Do the job!
-    new_job();
-    PrintInfo("Job done!");
+    new_task();
+
+    local_lock.lock();
+    --num_of_ongoing_tasks_;
+    local_lock.unlock();
   }
   PrintInfo("The thread is end.");
-};
+}
 
-void ThreadPool::EnqueueJob(std::function<void()> job) {
+void ThreadPool::EnqueueTask(std::function<void()> task) {
   if (thread_pool_status_ == ThreadPoolStatus::kKill) {
     throw std::runtime_error("Thread pool 사용 중지.");
   }
 
-  size_t num_queued_jobs;
   mutex_.lock();
-  job_queue_.push(std::move(job));
-  num_queued_jobs = job_queue_.size();
+  task_queue_.push(std::move(task));
   mutex_.unlock();
-  // PrintInfo("Job queue size: " + std::to_string(num_queued_jobs));
 
-  NotifyOne();
-};
+  WakeUpOneThread();
+}
 
-bool ThreadPool::AllocateProcessorForEachThread(std::thread& th,
-                                                const int& cpu_num) {
-  unsigned int num_max_threads = std::thread::hardware_concurrency();
-  if (cpu_num >= num_max_threads) {
-    std::cerr << "Exceed the maximum logical CPU number!";
+int ThreadPool::GetNumOfOngoingTasks() {
+  std::unique_lock<std::mutex> local_lock(mutex_);
+  return num_of_ongoing_tasks_;
+}
+
+int ThreadPool::GetNumOfQueuedTasks() {
+  std::unique_lock<std::mutex> local_lock(mutex_);
+  return static_cast<int>(task_queue_.size());
+}
+
+int ThreadPool::GetNumOfTotalThreads() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  return static_cast<int>(worker_thread_list_.size());
+}
+
+int ThreadPool::GetNumOfAwaitingThreads() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  return (static_cast<int>(worker_thread_list_.size()) - num_of_ongoing_tasks_);
+}
+
+bool ThreadPool::AllocateCpuProcessorForEachThread(std::thread& input_thread,
+                                                   const int cpu_core_index) {
+  const int num_max_threads_for_this_cpu =
+      static_cast<int>(std::thread::hardware_concurrency());
+  if (cpu_core_index >= num_max_threads_for_this_cpu) {
+    PrintInfo("Exceed the maximum logical CPU number!");
     return false;
   }
 
-  cpu_set_t cpuSet;
-  CPU_ZERO(&cpuSet);
-  CPU_SET(cpu_num, &cpuSet);
-  int rc =
-      pthread_setaffinity_np(th.native_handle(), sizeof(cpu_set_t), &cpuSet);
-  if (rc != 0) {
-    std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+  cpu_set_t cpu_set;
+  CPU_ZERO(&cpu_set);
+  CPU_SET(cpu_core_index, &cpu_set);
+  int result = pthread_setaffinity_np(input_thread.native_handle(),
+                                      sizeof(cpu_set_t), &cpu_set);
+  if (result != 0) {
+    PrintInfo("Error calling pthread_setaffinity_np: " +
+              std::to_string(result));
     return false;
   }
 
-  PrintInfo("The thread is running on CPU [" + std::to_string(cpu_num) + "]");
+  PrintInfo("The thread is confined to CPU Core [" +
+            std::to_string(cpu_core_index) + "]");
   return true;
-};
+}
 
-void ThreadPool::NotifyOne() { condition_variable_.notify_one(); };
-void ThreadPool::NotifyAll() { condition_variable_.notify_all(); };
+void ThreadPool::WakeUpOneThread() { condition_variable_.notify_one(); }
+
+void ThreadPool::WakeUpAllThreads() { condition_variable_.notify_all(); }
